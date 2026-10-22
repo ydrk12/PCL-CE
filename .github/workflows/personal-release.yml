@@ -1,0 +1,74 @@
+name: Personal sync and stable release
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional stable upstream tag to retry (empty = discover all pending)'
+        required: false
+        type: string
+  push:
+    branches: [personal]
+    paths:
+      - '.github/personal/**'
+      - '.github/workflows/personal-release.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-sync-and-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'ydrk12/PCL-CE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tags: ${{ steps.discover.outputs.tags }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: personal
+      - name: Sync upstream and discover stable releases
+        id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          python3 .github/personal/release.py sync
+          if [ -n "$REQUESTED_TAG" ]; then
+            python3 -c 'import json, os; print("tags=" + json.dumps([os.environ["REQUESTED_TAG"]]))' >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: sync
+    if: needs.sync.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tag: ${{ fromJSON(needs.sync.outputs.tags) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: personal
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - name: Build and test the narrowly scoped patcher
+        run: |
+          dotnet build .github/personal/RegionPatch --configuration Release
+          python3 -m unittest discover -s .github/personal/tests -v
+      - name: Verify official binaries, patch and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ matrix.tag }}
+        run: python3 .github/personal/release.py release --tag "$UPSTREAM_TAG"
