@@ -61,6 +61,36 @@ class DiscoveryTests(unittest.TestCase):
                 release.valid_tag(tag)
 
 
+class SourcePatchTests(unittest.TestCase):
+    def source(self):
+        return (PERSONAL / "tests/fixtures/current-policy.cs.txt").read_text(encoding="utf-8")
+
+    def test_refactored_policy_preserves_everything_except_two_members(self):
+        original = self.source()
+        patched = release.patch_policy(original)
+        self.assertIn("internal static bool IsRestricted => false;", patched)
+        self.assertIn("Check(string feature, bool showHint = true) => true;", patched)
+        self.assertEqual(original.split("    internal static void ThrowIfRestricted")[1],
+                         patched.split("    internal static void ThrowIfRestricted")[1])
+        self.assertEqual(original.split("    internal static bool IsRestricted")[0],
+                         patched.split("    internal static bool IsRestricted")[0])
+
+    def test_original_release_and_crlf_are_supported(self):
+        original = self.source().replace("Common.", "ModBase.")
+        original = original.replace("using PCL.Core.App.Localization;\nusing PCL.Core.App.Region;",
+                                    "using PCL.Core.App.Region;\nusing PCL.Core.App.Localization;\nusing PCL.Core.UI;")
+        patched = release.patch_policy(original.replace("\n", "\r\n"))
+        self.assertIn("IsRestricted => false;", patched)
+        self.assertNotIn("\n", patched.replace("\r\n", ""))
+        self.assertIn("throw new ModBase.CancelledException();", patched)
+
+    def test_unknown_logic_and_changed_signature_are_rejected(self):
+        for text in (self.source().replace("return false;", "Audit(); return false;"),
+                     self.source().replace("bool showHint = true", "bool showHint = false")):
+            with self.assertRaises(RuntimeError):
+                release.patch_policy(text)
+
+
 class BinaryPatchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

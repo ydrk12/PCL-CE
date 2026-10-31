@@ -25,7 +25,9 @@
 上游源码构建需要官方注入的登录等配置，本 fork 不持有这些配置。
 因此发布程序读取官方正式版安装包，验证 GitHub 提供的 SHA256 后，只替换
 `PCL.RestrictedFeaturePolicy.get_IsRestricted` 与 `Check(string, bool)` 的 IL 方法体。
-其效果与 `.github/personal/region-policy.patch` 相同。
+其效果与每个 Release 附带的 `region-policy.patch` 相同；该附件按对应正式标签生成。
+源码适配兼容已核对的 ModBase/Common 重命名和引用排序变化；未知逻辑变化仍会停止。
+`.github/personal/region-policy.patch` 保留为最初 2.15.1 的历史参考，不再作为同步时的固定文本补丁。
 
 补丁程序不执行或解密原程序，不提取登录凭据或配置内容；验证所有其他字节未改变。
 当前仅接受 .NET bundle 6.0、未压缩且非 ReadyToRun/非强命名的主程序集；结构变化会停止发布。

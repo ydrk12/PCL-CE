@@ -17,7 +17,6 @@ FORK = "ydrk12/PCL-CE"
 BRANCH = "personal"
 BASELINE = "2026-10-20T12:47:51Z"
 POLICY = "Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs"
-PATCH = ROOT / ".github/personal/region-policy.patch"
 TEMP_ROOT = ROOT / "work/personal-temp"
 BOT = {"GIT_AUTHOR_NAME": "github-actions[bot]", "GIT_AUTHOR_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com",
        "GIT_COMMITTER_NAME": "github-actions[bot]", "GIT_COMMITTER_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com"}
@@ -78,14 +77,47 @@ def candidates(upstream, existing):
             and fork_tag(r["tag_name"]) not in completed]
 
 
+def patch_policy(source):
+    """Only replace the two audited members; retain imports and all other members."""
+    newline = "\r\n" if "\r\n" in source else "\n"
+    text = source.replace("\r\n", "\n")
+    getter = "    internal static bool IsRestricted => Assess().IsRestricted;"
+    start = "    internal static bool Check(string feature, bool showHint = true)\n"
+    end = "\n    internal static void ThrowIfRestricted(string feature)"
+    if text.count(getter) != 1 or text.count(start) != 1 or text.count(end) != 1:
+        raise RuntimeError("Region policy member signatures changed; manual review required.")
+    check, _ = text.split(start, 1)[1].split(end, 1)
+    expected = '''    {
+        var assessment = Assess();
+        if (!assessment.IsRestricted) return true;
+
+        ModBase.Log($"[RegionPolicy] 已阻止功能 {feature}，判定原因：{assessment.Reason}");
+        if (showHint)
+        {
+            HintService.Hint(Lang.Text(assessment.Classification == RegionClassification.Unknown
+                ? "Region.Feature.Unknown"
+                : "Region.Feature.Restricted"), HintType.Error);
+        }
+        return false;
+    }
+'''
+    if check not in (expected, expected.replace("ModBase.Log", "Common.Log")):
+        raise RuntimeError("Region policy Check logic changed; manual review required.")
+    text = text.replace(getter, "    internal static bool IsRestricted => false;", 1)
+    text = text.replace(start + check, "    internal static bool Check(string feature, bool showHint = true) => true;\n", 1)
+    return text.replace("\n", newline)
+
+
 def patched_tree(base, overlay=False):
     # A private temporary index avoids changing the checked-out branch or user files.
     TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pcl-index-", dir=TEMP_ROOT) as directory:
         env = {"GIT_INDEX_FILE": str(Path(directory) / "index")}
         git("read-tree", base, env=env)
-        git("apply", "--cached", "--check", str(PATCH), env=env)
-        git("apply", "--cached", str(PATCH), env=env)
+        original = git("show", f"{base}:{POLICY}") + "\n"
+        patched = patch_policy(original).encode("utf-8")
+        blob = git("hash-object", "-w", "--stdin", data=patched)
+        git("update-index", "--cacheinfo", "100644", blob, POLICY, env=env)
         if overlay:
             files = git("ls-files", "-z", "--", ".github/personal", ".github/workflows/personal-release.yml", "PERSONAL-FORK.md").split("\0")
             for name in filter(None, files):
@@ -199,7 +231,8 @@ def release(tag):
                   "upstreamCommit": upstream_sha, "sourceCommit": patched_sha, "patchVersion": 1,
                   "automationCommit": git("rev-parse", "HEAD"), "assets": reports}
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    (output / "region-policy.patch").write_bytes(PATCH.read_bytes())
+    source_diff = git("diff", "--binary", upstream_sha, patched_sha, "--", POLICY) + "\n"
+    (output / "region-policy.patch").write_text(source_diff, encoding="utf-8", newline="\n")
     (output / "SHA256SUMS.txt").write_text("".join(
         hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n"
         for path in sorted(output.iterdir()) if path.name != "SHA256SUMS.txt"), encoding="utf-8")
