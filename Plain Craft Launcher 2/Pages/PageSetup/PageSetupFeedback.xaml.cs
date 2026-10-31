@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Text.Json.Serialization;
@@ -22,7 +22,7 @@ public partial class PageSetupFeedback : IPageView
         Upnext = 8550609020L
     }
 
-    public ModLoader.LoaderTask<bool, List<Feedback>> Loader;
+    public Loading.LoaderTask<bool, List<Feedback>> Loader;
 
     private readonly PageSetupFeedbackViewModel _vm = new();
     private bool _refreshed;
@@ -44,7 +44,7 @@ public partial class PageSetupFeedback : IPageView
     {
         InitializeComponent();
         DataContext = _vm;
-        Loader = new ModLoader.LoaderTask<bool, List<Feedback>>("FeedbackList", FeedbackListGet);
+        Loader = new Loading.LoaderTask<bool, List<Feedback>>("FeedbackList", FeedbackListGet);
         Loaded += PageOtherFeedback_Loaded;
         Unloaded += PageOtherFeedback_Unloaded;
     }
@@ -70,7 +70,7 @@ public partial class PageSetupFeedback : IPageView
         PageLoaderInit(Load, PanLoad, PanContent, PanInfo, Loader, _ => RefreshList());
     }
 
-    public void FeedbackListGet(ModLoader.LoaderTask<bool, List<Feedback>> task)
+    public void FeedbackListGet(Loading.LoaderTask<bool, List<Feedback>> task)
     {
         task.output = _vm.FetchFeedbackList();
     }
@@ -81,10 +81,14 @@ public partial class PageSetupFeedback : IPageView
         {
             Title = item.Title,
             Type = MyListItem.CheckType.Clickable,
-            Info = $"{item.User} | {Lang.Date(item.Time)}",
-            Logo = ModBase.pathImage + logo,
-            Tags = item.Type
+            Logo = Common.PathImage + logo,
+            PlainTags = [item.TypeDisplay]
         };
+        // Info 含日期格式化，按当前语言重新求值
+        LocalizedText.TryBind(
+            li,
+            "Info",
+            () => $"{item.User} | {Lang.Date(item.Time)}");
 
         li.Click += (_, _) => ShowFeedbackDetail(item);
 
@@ -94,18 +98,24 @@ public partial class PageSetupFeedback : IPageView
     private void ShowFeedbackDetail(Feedback item)
     {
         var timeSpanText = Lang.TimeSpan(item.Time - DateTime.Now);
-        switch (ModMain.MyMsgBoxMarkdown(
+        switch (Launcher.MyMsgBoxMarkdown(
                     Lang.Text("Setup.Feedback.Item.Submitter", item.User, timeSpanText) + "\n" +
-                    Lang.Text("Setup.Feedback.Item.Type", item.Type) + "\n\n" +
+                    Lang.Text("Setup.Feedback.Item.Type", item.TypeDisplay) + "\n\n" +
                     item.Content,
                     $"#{item.Id} {item.Title}", button2: Lang.Text("Setup.Feedback.Item.ViewDetail")))
         {
             case 2:
             {
-                ModBase.OpenWebsite(item.Url);
+                Common.OpenWebsite(item.Url);
                 break;
             }
         }
+    }
+
+    protected override void RefreshLocalization()
+    {
+        if (Loader.State == Common.LoadState.Finished)
+            RefreshList();
     }
 
     public void RefreshList()
@@ -150,6 +160,17 @@ public partial class PageSetupFeedback : IPageView
         [JsonIgnore]
         public string Id { get; set; } = string.Empty;
         public List<string> Tags { get; } = new();
+        /// <summary>
+        ///     服务端返回的原始类型标识（例如 <c>bug</c>）。为空表示未分类。
+        ///     该字段不参与本地化。
+        /// </summary>
         public string Type { get; set; } = string.Empty;
+
+        /// <summary>
+        ///     当前语言下显示的类型文本。
+        /// </summary>
+        [JsonIgnore]
+        public string TypeDisplay =>
+            string.IsNullOrEmpty(Type) ? Lang.Text("Setup.Feedback.Uncategorized") : Type;
     }
 }

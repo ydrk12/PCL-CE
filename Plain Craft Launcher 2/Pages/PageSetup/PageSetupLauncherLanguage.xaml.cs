@@ -31,14 +31,14 @@ public partial class PageSetupLauncherLanguage
             return;
         _isLoaded = true;
 
-        ModAnimation.AniBeginControl();
+        Animations.AniBeginControl();
         Reload();
-        ModAnimation.AniEndControl();
+        Animations.AniEndControl();
     }
 
     public void Reload()
     {
-        ModAnimation.AniBeginControl();
+        Animations.AniBeginControl();
         try
         {
             ReloadLanguageCombo();
@@ -47,7 +47,7 @@ public partial class PageSetupLauncherLanguage
         }
         finally
         {
-            ModAnimation.AniEndControl();
+            Animations.AniEndControl();
         }
     }
 
@@ -58,16 +58,16 @@ public partial class PageSetupLauncherLanguage
             Config.Preference.Localization.LanguageConfig.SetDefaultValue();
             Config.Preference.Localization.FormatCultureConfig.SetDefaultValue();
             LocalizationService.ApplyFromConfig();
-            ModBase.Log("[Setup] 已初始化启动器-语言页设置");
+            Common.Log("[Setup] 已初始化启动器-语言页设置");
             HintService.Hint(Lang.Text("Setup.Language.Reset.Success"), HintType.Success, false);
             Reload();
         }
         catch (Exception ex)
         {
-            ModBase.Log(
+            Common.Log(
                 ex,
                 "初始化启动器-语言页设置失败",
-                ModBase.LogLevel.Msgbox,
+                Common.LogLevel.Msgbox,
                 userSummary: Lang.Text("Setup.Error.OperationFailed"));
         }
     }
@@ -76,10 +76,15 @@ public partial class PageSetupLauncherLanguage
     {
         ComboUiLanguage.Items.Clear();
         var autoLanguage = LocalizationService.ResolveLanguage(LocalizationService.Auto);
-        ComboUiLanguage.Items.Add(CreateLanguageComboItem(
-            Lang.Text("Setup.Language.UiLanguage.Auto", GetLanguageDisplay(autoLanguage)),
+        var autoLanguageItem = CreateLanguageComboItem(
+            string.Empty,
             LocalizationService.Auto,
-            autoLanguage));
+            autoLanguage);
+        LocalizedText.TryBind(
+            autoLanguageItem,
+            "Content",
+            () => Lang.Text("Setup.Language.UiLanguage.Auto", GetLanguageDisplay(autoLanguage)));
+        ComboUiLanguage.Items.Add(autoLanguageItem);
 
         foreach (var language in LocalizationService.SupportedLanguages)
             ComboUiLanguage.Items.Add(CreateLanguageComboItem(
@@ -91,16 +96,22 @@ public partial class PageSetupLauncherLanguage
     private void ReloadFormatCultureCombo()
     {
         ComboUiFormatCulture.Items.Clear();
-        ComboUiFormatCulture.Items.Add(new MyComboBoxItem
+        var autoFormatItem = new MyComboBoxItem
         {
-            Content = Lang.Text("Setup.Language.FormatCulture.Auto"),
             Tag = LocalizationService.Auto
-        });
-        ComboUiFormatCulture.Items.Add(new MyComboBoxItem
+        };
+        autoFormatItem.TrySetLocalizedValue(
+            "Content",
+            "Setup.Language.FormatCulture.Auto");
+        ComboUiFormatCulture.Items.Add(autoFormatItem);
+        var followLanguageFormatItem = new MyComboBoxItem
         {
-            Content = Lang.Text("Setup.Language.FormatCulture.FollowLanguage"),
             Tag = LocalizationService.FormatCultureFollowLanguage
-        });
+        };
+        followLanguageFormatItem.TrySetLocalizedValue(
+            "Content",
+            "Setup.Language.FormatCulture.FollowLanguage");
+        ComboUiFormatCulture.Items.Add(followLanguageFormatItem);
 
         foreach (var culture in PageSetupLauncherLanguageViewModel.GetBuiltInFormatCultures())
             ComboUiFormatCulture.Items.Add(new MyComboBoxItem
@@ -122,7 +133,7 @@ public partial class PageSetupLauncherLanguage
 
     private void ComboUiLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ModAnimation.AniExitsAnyControl())
+        if (Animations.AniExitsAnyControl())
             return;
         if (ComboUiLanguage.SelectedItem is not MyComboBoxItem item)
             return;
@@ -138,7 +149,7 @@ public partial class PageSetupLauncherLanguage
 
     private void ComboUiFormatCulture_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (ModAnimation.AniExitsAnyControl())
+        if (Animations.AniExitsAnyControl())
             return;
         if (ComboUiFormatCulture.SelectedItem is not MyComboBoxItem item)
             return;

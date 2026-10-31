@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using PCL.Core.App.Localization;
 
@@ -38,6 +38,8 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
         _ = RefreshInfoAsync();
     }
 
+    protected override void RefreshLocalization() => Refresh();
+
     private void PageInfo_Loaded(object sender, RoutedEventArgs e)
     {
         RefreshOnNavigate();
@@ -62,8 +64,8 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
         try
         {
             await _vm.LoadAsync();
-            if (ModMain.frmInstanceSavesLeft is not null)
-                ModMain.frmInstanceSavesLeft.ViewModel.ShowDatapackTab = _vm.ShowDatapackTab;
+            if (Launcher.frmInstanceSavesLeft is not null)
+                Launcher.frmInstanceSavesLeft.ViewModel.ShowDatapackTab = _vm.ShowDatapackTab;
             PanList.Children.Clear();
             PanList.RowDefinitions.Clear();
             PanSettingsList.Children.Clear();
@@ -73,7 +75,7 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
         }
         catch (Exception ex)
         {
-            ModBase.Log(ex, Lang.Text("Instance.Saves.Info.Error.LoadFailed"), ModBase.LogLevel.Msgbox,
+            Common.Log(ex, Lang.Text("Instance.Saves.Info.Error.LoadFailed"), Common.LogLevel.Msgbox,
                 userSummary: Lang.Text("Instance.Saves.Info.Error.LoadFailed"));
         }
     }
@@ -101,9 +103,9 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
             {
                 SvgIcon = "lucide/external-link",
                 Width = 22d,
-                Height = 22d,
-                ToolTip = Lang.Text("Instance.Saves.Info.Chunkbase.ToolTip")
+                Height = 22d
             };
+            chunkbaseBtn.TrySetLocalizedValue("ToolTip", "Instance.Saves.Info.Chunkbase.ToolTip");
             chunkbaseBtn.Click += (_, _) => PageInstanceSavesInfoViewModel.OpenChunkbase(content, versionName);
             contentStack.Children.Add(chunkbaseBtn);
         }
@@ -127,11 +129,11 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
     {
         try
         {
-            ModBase.ClipboardSet(content);
+            Common.ClipboardSet(content);
         }
         catch (Exception ex)
         {
-            ModBase.Log(ex, Lang.Text("Instance.Saves.Info.Error.ClipboardFailed"), ModBase.LogLevel.Hint,
+            Common.Log(ex, Lang.Text("Instance.Saves.Info.Error.ClipboardFailed"), Common.LogLevel.Hint,
                 userSummary: Lang.Text("Instance.Saves.Info.Error.ClipboardFailed"));
         }
     }
@@ -151,11 +153,11 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
         {
             Width = 100d,
             HorizontalAlignment = HorizontalAlignment.Left,
-            ToolTip = Lang.Text("Instance.Saves.Info.Modify.BeforeSave"),
             SelectedValuePath = "Value",
             DisplayMemberPath = "Display",
             ItemsSource = _vm.AllowCommandsOptions
         };
+        combo.TrySetLocalizedValue("ToolTip", "Instance.Saves.Info.Modify.BeforeSave");
         combo.SelectedValue = allowCommands ? 1 : 0;
         combo.SelectionChanged += async (_, _) =>
         {
@@ -167,7 +169,7 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
             }
             catch (Exception ex)
             {
-                ModBase.Log(ex, Lang.Text("Instance.Saves.Info.Modify.CheatFailed"), ModBase.LogLevel.Hint,
+                Common.Log(ex, Lang.Text("Instance.Saves.Info.Modify.CheatFailed"), Common.LogLevel.Hint,
                     userSummary: Lang.Text("Instance.Saves.Info.Modify.CheatFailed"));
             }
         };
@@ -182,22 +184,22 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
         {
             Width = 100d,
             HorizontalAlignment = HorizontalAlignment.Left,
-            ToolTip = Lang.Text("Instance.Saves.Info.Modify.BeforeSave"),
             SelectedValuePath = "Value",
             DisplayMemberPath = "Display",
             ItemsSource = _vm.DifficultyOptions
         };
+        combo.TrySetLocalizedValue("ToolTip", "Instance.Saves.Info.Modify.BeforeSave");
         combo.SelectedValue = difficultyValue;
 
         var lockCheckBox = new MyCheckBox
         {
-            Text = Lang.Text("Instance.Saves.Info.LockDifficulty"),
-            ToolTip = Lang.Text("Instance.Saves.Info.LockDifficulty.ToolTip"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10d, 0d, 0d, 0d),
             Checked = isLocked,
             Visibility = isHardcore ? Visibility.Collapsed : Visibility.Visible
         };
+        lockCheckBox.TrySetLocalizedValue("Text", "Instance.Saves.Info.LockDifficulty");
+        lockCheckBox.TrySetLocalizedValue("ToolTip", "Instance.Saves.Info.LockDifficulty.ToolTip");
 
         var panel = new StackPanel
         {
@@ -218,7 +220,7 @@ public partial class PageInstanceSavesInfo : IRefreshable, IPageView
             }
             catch (Exception ex)
             {
-                ModBase.Log(ex, Lang.Text("Instance.Saves.Info.Modify.DifficultyFailed"), ModBase.LogLevel.Hint,
+                Common.Log(ex, Lang.Text("Instance.Saves.Info.Modify.DifficultyFailed"), Common.LogLevel.Hint,
                     userSummary: Lang.Text("Instance.Saves.Info.Modify.DifficultyFailed"));
             }
         }
