@@ -90,6 +90,25 @@ class SourcePatchTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 release.patch_policy(text)
 
+    def test_launchercommon_and_new_hint_api_preserve_other_members(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-01-policy.cs.txt").read_text(encoding="utf-8")
+        for source in (original, original.replace("\n", "\r\n")):
+            patched = release.patch_policy(source)
+            self.assertIn("IsRestricted => false;", patched)
+            self.assertIn("Check(string feature, bool showHint = true) => true;", patched)
+            prefix, _, suffix = source.partition("    internal static bool IsRestricted")
+            self.assertTrue(patched.startswith(prefix))
+            tail = source[source.index("    internal static void ThrowIfRestricted"):]
+            self.assertTrue(patched.endswith(tail))
+            self.assertIn("throw new CancelledException();", patched)
+
+    def test_modern_policy_unknown_logic_is_rejected(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-01-policy.cs.txt").read_text(encoding="utf-8")
+        for source in (original.replace("Hints.Error", "Hints.Warning"),
+                       original.replace("return false;", "Audit(); return false;")):
+            with self.assertRaisesRegex(RuntimeError, "logic changed"):
+                release.patch_policy(source)
+
 
 class BinaryPatchTests(unittest.TestCase):
     @classmethod
