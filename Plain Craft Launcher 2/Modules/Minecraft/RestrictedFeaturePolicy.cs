@@ -1,4 +1,5 @@
 using PCL.Core.App.Localization;
+using PCL.Core.UI.Hints;
 using PCL.Core.App.Region;
 
 namespace PCL;
@@ -14,6 +15,6 @@ internal static class RestrictedFeaturePolicy
     internal static void ThrowIfRestricted(string feature)
     {
         if (Check(feature, false)) return;
-        throw new Common.CancelledException();
+        throw new CancelledException();
     }
 }
