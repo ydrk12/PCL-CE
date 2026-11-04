@@ -105,7 +105,18 @@ def patch_policy(source):
     modern = expected.replace("ModBase.Log", "LauncherCommon.Log").replace(
         "HintService.Hint(Lang.Text(", "HintService.Show(Hints.Error(Lang.Text(").replace(
         ': "Region.Feature.Restricted"), HintType.Error);', ': "Region.Feature.Restricted")));')
-    if check not in (expected, expected.replace("ModBase.Log", "Common.Log"), modern):
+    # Audited 2026-11-04: the two regional hint messages were unified.
+    unified_hint = '''    {
+        var assessment = Assess();
+        if (!assessment.IsRestricted) return true;
+
+        LauncherCommon.Log($"[RegionPolicy] 已阻止功能 {feature}，判定原因：{assessment.Reason}");
+        if (showHint)
+            HintService.Show(Hints.Error(Lang.Text("Region.Feature.Restricted")));
+        return false;
+    }
+'''
+    if check not in (expected, expected.replace("ModBase.Log", "Common.Log"), modern, unified_hint):
         raise RuntimeError("Region policy Check logic changed; manual review required.")
     text = text.replace(getter, "    internal static bool IsRestricted => false;", 1)
     text = text.replace(start + check, "    internal static bool Check(string feature, bool showHint = true) => true;\n", 1)

@@ -26,7 +26,7 @@
 因此发布程序读取官方正式版安装包，验证 GitHub 提供的 SHA256 后，只替换
 `PCL.RestrictedFeaturePolicy.get_IsRestricted` 与 `Check(string, bool)` 的 IL 方法体。
 其效果与每个 Release 附带的 `region-policy.patch` 相同；该附件按对应正式标签生成。
-源码适配兼容已核对的 ModBase/Common/LauncherCommon 重命名、2026-11-01 提示接口重构及引用排序变化；未知逻辑变化仍会停止。
+源码适配兼容已核对的 ModBase/Common/LauncherCommon 重命名、2026-11-01 提示接口重构、2026-11-04 统一地区提示及引用排序变化；未知逻辑变化仍会停止。
 `.github/personal/region-policy.patch` 保留为最初 2.15.1 的历史参考，不再作为同步时的固定文本补丁。
 
 补丁程序不执行或解密原程序，不提取登录凭据或配置内容；验证所有其他字节未改变。

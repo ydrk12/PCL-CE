@@ -110,6 +110,25 @@ class SourcePatchTests(unittest.TestCase):
                 release.patch_policy(source)
 
 
+    def test_unified_region_hint_preserves_non_target_members(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-04-policy.cs.txt").read_text(encoding="utf-8")
+        for source in (original, original.replace("\n", "\r\n")):
+            patched = release.patch_policy(source)
+            self.assertIn("IsRestricted => false;", patched)
+            self.assertIn("Check(string feature, bool showHint = true) => true;", patched)
+            self.assertEqual(source.split("    internal static bool IsRestricted")[0],
+                             patched.split("    internal static bool IsRestricted")[0])
+            self.assertEqual(source.split("    internal static void ThrowIfRestricted")[1],
+                             patched.split("    internal static void ThrowIfRestricted")[1])
+
+    def test_unified_hint_unknown_control_flow_is_rejected(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-04-policy.cs.txt").read_text(encoding="utf-8")
+        for source in (original.replace("if (!assessment.IsRestricted)", "if (assessment.IsRestricted)"),
+                       original.replace("return false;", "Audit(); return false;")):
+            with self.assertRaisesRegex(RuntimeError, "logic changed"):
+                release.patch_policy(source)
+
+
 class BinaryPatchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
