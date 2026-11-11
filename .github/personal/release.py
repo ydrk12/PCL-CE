@@ -27,7 +27,12 @@ def git(*args, data=None, env=None):
                              env={**os.environ, **BOT, **(env or {})})
     if process.returncode:
         # Never print auth-bearing HTTP configuration or tokens.
-        raise RuntimeError(f"git {args[0]} failed: " + process.stderr.decode(errors="replace"))
+        detail = process.stderr.decode(errors="replace")
+        if "without `workflows` permission" in detail:
+            detail += ("\nUpstream changed GitHub Actions files. Configure repository secret SYNC_TOKEN "
+                       "with Contents and Workflows read/write access to this fork, then rerun. "
+                       "The default GITHUB_TOKEN cannot update workflow files.")
+        raise RuntimeError(f"git {args[0]} failed: " + detail)
     return process.stdout.decode().strip()
 
 

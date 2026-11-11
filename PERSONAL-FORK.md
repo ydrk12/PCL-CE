@@ -42,4 +42,13 @@
 补丁不适用、下载校验失败、测试失败或附件不完整时不发布正式版。
 已发布版本不会被覆盖；中途失败的草稿可在重试时补全。
 可在 GitHub 通知设置中启用 Actions 失败邮件，然后将失败运行链接交给 Codex 排查。
-本流程不需要额外 PAT、微软应用注册或上游的仓库 Secrets。
+本流程不需要微软应用注册或上游的仓库 Secrets。
+
+## 同步工作流文件的权限
+
+默认 GITHUB_TOKEN 可以同步普通源码，但不能创建或更新 GitHub Actions 工作流文件。
+当上游修改 `.github/workflows/` 时，需要在本 fork 配置 Actions secret `SYNC_TOKEN`。
+推荐 fine-grained PAT：仅选择 `ydrk12/PCL-CE`，授予 Contents 与 Workflows 的读写权限，设置适当有效期。
+将令牌直接保存到 GitHub Settings → Secrets and variables → Actions，不要写入源码或发到聊天。
+工作流会在检出、分支/标签同步和发布时优先使用此令牌；未配置时回退到 GITHUB_TOKEN。
+令牌缺失、过期或权限不足时仍会停止，不会删去上游工作流或强制覆盖分支。

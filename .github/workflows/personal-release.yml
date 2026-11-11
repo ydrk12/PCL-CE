@@ -34,14 +34,24 @@ jobs:
         with:
           fetch-depth: 0
           ref: personal
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+      - name: Report sync credential mode
+        env:
+          SYNC_TOKEN_CONFIGURED: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          if [ "$SYNC_TOKEN_CONFIGURED" = "true" ]; then
+            echo "Using configured SYNC_TOKEN; its workflow permissions are checked by GitHub."
+          else
+            echo "::warning::SYNC_TOKEN is not configured. Ordinary source sync works, but future upstream workflow changes need Contents and Workflows write permissions."
+          fi
       - name: Test source compatibility and release discovery
         env:
           PYTHONPATH: .github/personal/tests
-        run: python3 -m unittest test_release.SourcePatchTests test_release.DiscoveryTests -v
+        run: python3 -m unittest test_release.SourcePatchTests test_release.DiscoveryTests test_release.SyncPermissionTests -v
       - name: Sync upstream and discover stable releases
         id: discover
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
         run: |
           python3 .github/personal/release.py sync
@@ -64,6 +74,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: personal
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 8.0.x
@@ -73,6 +84,6 @@ jobs:
           python3 -m unittest discover -s .github/personal/tests -v
       - name: Verify official binaries, patch and publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           UPSTREAM_TAG: ${{ matrix.tag }}
         run: python3 .github/personal/release.py release --tag "$UPSTREAM_TAG"

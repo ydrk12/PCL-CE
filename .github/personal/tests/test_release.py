@@ -7,6 +7,8 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 PERSONAL = Path(__file__).resolve().parents[1]
 TEST_TEMP = PERSONAL.parents[1] / "work/personal-tests"
@@ -127,6 +129,23 @@ class SourcePatchTests(unittest.TestCase):
                        original.replace("return false;", "Audit(); return false;")):
             with self.assertRaisesRegex(RuntimeError, "logic changed"):
                 release.patch_policy(source)
+
+
+class SyncPermissionTests(unittest.TestCase):
+    def test_workflow_permission_failure_has_actionable_message(self):
+        failure = SimpleNamespace(returncode=1, stdout=b"", stderr=(
+            b"refusing to allow a GitHub App to update workflow without `workflows` permission"))
+        with mock.patch.object(release.subprocess, "run", return_value=failure):
+            with self.assertRaisesRegex(RuntimeError, "Configure repository secret SYNC_TOKEN"):
+                release.git("push", "origin", "test")
+
+    def test_other_git_failures_do_not_claim_permission_problem(self):
+        failure = SimpleNamespace(returncode=1, stdout=b"", stderr=b"non-fast-forward")
+        with mock.patch.object(release.subprocess, "run", return_value=failure):
+            with self.assertRaises(RuntimeError) as caught:
+                release.git("push", "origin", "test")
+        self.assertIn("non-fast-forward", str(caught.exception))
+        self.assertNotIn("SYNC_TOKEN", str(caught.exception))
 
 
 class BinaryPatchTests(unittest.TestCase):
