@@ -7,6 +7,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 from types import SimpleNamespace
 
@@ -131,6 +132,36 @@ class SourcePatchTests(unittest.TestCase):
                 release.patch_policy(source)
 
 
+    def test_avalonia_bridge_preserves_other_members_and_line_endings(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-20-bridge.cs.txt").read_text(encoding="utf-8")
+        for source in (original, original.replace("\n", "\r\n")):
+            patched = release.patch_bridge(source)
+            self.assertIn("public bool IsRestricted => false;", patched)
+            self.assertIn("public bool Check(string feature) => true;", patched)
+            self.assertEqual(source.split("    public bool IsRestricted")[0],
+                             patched.split("    public bool IsRestricted")[0])
+            self.assertEqual(source.split("    public void ThrowIfRestricted")[1],
+                             patched.split("    public void ThrowIfRestricted")[1])
+            self.assertEqual(source.count("\r\n") > 0, patched.count("\r\n") > 0)
+
+    def test_avalonia_bridge_unknown_logic_is_rejected(self):
+        original = (PERSONAL / "tests/fixtures/2026-11-20-bridge.cs.txt").read_text(encoding="utf-8")
+        for source in (original.replace("return false;", "Audit(); return false;"),
+                       original.replace("if (!assessment.IsRestricted)", "if (assessment.IsRestricted)"),
+                       original.replace("_Assess().IsRestricted", "OtherPolicy.IsRestricted")):
+            with self.assertRaisesRegex(RuntimeError, "bridge changed"):
+                release.patch_bridge(source)
+
+    def test_policy_path_requires_exactly_one_known_layout(self):
+        for path in (release.POLICY, release.BRIDGE):
+            with mock.patch.object(release, "git", return_value=path):
+                self.assertEqual(release.policy_path("dev"), path)
+        for paths in ("unrelated.cs", release.POLICY + "\n" + release.BRIDGE):
+            with mock.patch.object(release, "git", return_value=paths):
+                with self.assertRaisesRegex(RuntimeError, "layout"):
+                    release.policy_path("dev")
+
+
 class SyncPermissionTests(unittest.TestCase):
     def test_workflow_permission_failure_has_actionable_message(self):
         failure = SimpleNamespace(returncode=1, stdout=b"", stderr=(
@@ -193,6 +224,76 @@ class BinaryPatchTests(unittest.TestCase):
                 output = directory / "output.exe"
                 result = self.run_patcher(source, output, directory / "report.json")
                 self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(output.exists())
+
+
+class BridgeBinaryPatchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        process = subprocess.run(["dotnet", "build", str(PERSONAL / "tests/BridgeFixture"), "-c", "Release"],
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if process.returncode:
+            raise RuntimeError(process.stdout + process.stderr)
+        cls.fixture = PERSONAL / "tests/BridgeFixture/bin/Release/net8.0"
+        cls.tool = PERSONAL / "RegionPatch/bin/Release/net8.0/RegionPatch.dll"
+
+    def assert_behavior(self, directory):
+        shutil.copyfile(self.fixture / "PCL.Launcher.runtimeconfig.json", directory / "PCL.Launcher.runtimeconfig.json")
+        result = subprocess.run(["dotnet", str(directory / "PCL.Launcher.dll")],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), dict(restricted=False, allowed=True, threw=False))
+
+    def test_standalone_instance_methods_execute_and_only_il_changes(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP) as temporary:
+            directory = Path(temporary)
+            output, report = directory / "PCL.Launcher.dll", directory / "report.json"
+            original = self.fixture / "PCL.Launcher.dll"
+            subprocess.run(["dotnet", str(self.tool), str(original), str(output), str(report)], check=True)
+            detail = json.loads(report.read_text())
+            self.assertTrue(detail["outsideApprovedIlIdentical"])
+            self.assertEqual(len(detail["methods"]), 2)
+            self.assertEqual(len(original.read_bytes()), len(output.read_bytes()))
+            for offset, (before, after) in enumerate(zip(original.read_bytes(), output.read_bytes())):
+                if before != after:
+                    self.assertTrue(any(r["Offset"] <= offset < r["Offset"] + r["Length"] for r in detail["methods"]))
+            self.assert_behavior(directory)
+
+    def test_zip_preserves_other_payloads_and_patched_dll_executes(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP) as temporary:
+            directory = Path(temporary)
+            source, output, report = [directory / n for n in ("original.zip", "patched.zip", "report.json")]
+            payloads = {"PCL.Launcher.dll": (self.fixture / "PCL.Launcher.dll").read_bytes(),
+                        "nested/config.json": b'{"preserve":true}', "PCL.Launcher.exe": bytes(range(256))}
+            with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.comment = b"upstream-comment"
+                for name, content in payloads.items():
+                    archive.writestr(name, content)
+            release.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+            release.patch_archive(source, output, report, self.tool)
+            with zipfile.ZipFile(output) as archive:
+                self.assertEqual(archive.namelist(), list(payloads))
+                self.assertEqual(archive.comment, b"upstream-comment")
+                for name, content in payloads.items():
+                    if name != "PCL.Launcher.dll":
+                        self.assertEqual(archive.read(name), content)
+                (directory / "PCL.Launcher.dll").write_bytes(archive.read("PCL.Launcher.dll"))
+            detail = json.loads(report.read_text())
+            self.assertTrue(detail["assemblyVerification"]["outsideApprovedIlIdentical"])
+            self.assertEqual(len(detail["unchangedPackageFiles"]), 2)
+            self.assert_behavior(directory)
+
+    def test_zip_missing_or_duplicate_main_assembly_is_rejected(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP) as temporary:
+            directory = Path(temporary)
+            for entries in (("nested/PCL.Launcher.dll",), ("PCL.Launcher.dll", "PCL.Launcher.dll")):
+                source = directory / "input.zip"
+                with zipfile.ZipFile(source, "w") as archive:
+                    for entry in entries:
+                        archive.writestr(entry, b"placeholder")
+                output = directory / "output.zip"
+                with self.assertRaises(RuntimeError):
+                    release.patch_archive(source, output, directory / "report.json", self.tool)
                 self.assertFalse(output.exists())
 
 

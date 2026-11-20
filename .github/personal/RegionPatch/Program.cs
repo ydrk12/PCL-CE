@@ -9,8 +9,9 @@ using System.Text.Json;
 if (args.Length != 3) throw new ArgumentException("Usage: RegionPatch input.exe output.exe report.json");
 var original = File.ReadAllBytes(args[0]);
 var modified = (byte[])original.Clone();
-var entries = ReadBundle(original);
-var main = entries.Single(e => e.Name == "Plain Craft Launcher 2.dll" && e.Type == 1);
+var standalone = Path.GetExtension(args[0]).Equals(".dll", StringComparison.OrdinalIgnoreCase);
+var entries = standalone ? new List<BundleEntry> { new(0, original.Length, 0, 1, "PCL.Launcher.dll") } : ReadBundle(original);
+var main = entries.Single(e => e.Name == (standalone ? "PCL.Launcher.dll" : "Plain Craft Launcher 2.dll") && e.Type == 1);
 if (main.CompressedSize != 0) throw new InvalidDataException("Compressed main assembly: manual review required.");
 using var mainStream = new MemoryStream(original, checked((int)main.Offset), checked((int)main.Size), false);
 using var pe = new PEReader(mainStream);
@@ -18,22 +19,25 @@ var cor = pe.PEHeaders.CorHeader ?? throw new InvalidDataException("Not a manage
 if (cor.ManagedNativeHeaderDirectory.Size != 0 || cor.StrongNameSignatureDirectory.Size != 0)
     throw new InvalidDataException("ReadyToRun/strong-named main assembly: manual review required.");
 var metadata = pe.GetMetadataReader();
+if (standalone && metadata.GetString(metadata.GetAssemblyDefinition().Name) != "PCL.Launcher")
+    throw new InvalidDataException("Unexpected standalone assembly name.");
 var policyHandles = metadata.TypeDefinitions.Where(h => {
     var t = metadata.GetTypeDefinition(h);
-    return metadata.GetString(t.Name) == "RestrictedFeaturePolicy" && metadata.GetString(t.Namespace) == "PCL";
+    return metadata.GetString(t.Name) == (standalone ? "RestrictedFeaturesBridge" : "RestrictedFeaturePolicy") &&
+        metadata.GetString(t.Namespace) == (standalone ? "PCL.UI.Bridges" : "PCL");
 }).ToArray();
 if (policyHandles.Length != 1) throw new InvalidDataException("Expected exactly one region policy type.");
 var policy = metadata.GetTypeDefinition(policyHandles[0]);
 var ranges = new List<PatchRange>();
 foreach (var (name, result, signature) in new[] {
-    ("get_IsRestricted", false, new byte[] { 0, 0, 2 }),
-    ("Check", true, new byte[] { 0, 2, 2, 0x0e, 2 }) })
+    ("get_IsRestricted", false, standalone ? new byte[] { 0x20, 0, 2 } : new byte[] { 0, 0, 2 }),
+    ("Check", true, standalone ? new byte[] { 0x20, 1, 2, 0x0e } : new byte[] { 0, 2, 2, 0x0e, 2 }) })
 {
     var candidates = policy.GetMethods().Select(metadata.GetMethodDefinition)
         .Where(m => metadata.GetString(m.Name) == name).ToArray();
     if (candidates.Length != 1) throw new InvalidDataException($"Missing/ambiguous method: {name}");
     var method = candidates[0];
-    if (!method.Attributes.HasFlag(MethodAttributes.Static) ||
+    if (method.Attributes.HasFlag(MethodAttributes.Static) == standalone ||
         !metadata.GetBlobBytes(method.Signature).SequenceEqual(signature))
         throw new InvalidDataException($"Unexpected signature: {name}");
     var body = pe.GetMethodBody(method.RelativeVirtualAddress);

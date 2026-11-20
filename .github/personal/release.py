@@ -1,5 +1,6 @@
 """Sync upstream and publish narrowly patched official bundles. Standard library only."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = "PCL-Community/PCL-CE"
@@ -17,6 +19,7 @@ FORK = "ydrk12/PCL-CE"
 BRANCH = "personal"
 BASELINE = "2026-10-20T12:47:51Z"
 POLICY = "Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs"
+BRIDGE = "PCL.Launcher/UI/Bridges/RestrictedFeaturesBridge.cs"
 TEMP_ROOT = ROOT / "work/personal-temp"
 BOT = {"GIT_AUTHOR_NAME": "github-actions[bot]", "GIT_AUTHOR_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com",
        "GIT_COMMITTER_NAME": "github-actions[bot]", "GIT_COMMITTER_EMAIL": "41898282+github-actions[bot]@users.noreply.github.com"}
@@ -128,16 +131,49 @@ def patch_policy(source):
     return text.replace("\n", newline)
 
 
+def patch_bridge(source):
+    newline = "\r\n" if "\r\n" in source else "\n"
+    text = source.replace("\r\n", "\n")
+    getter = "    public bool IsRestricted => _Assess().IsRestricted;"
+    original = '''    public bool Check(string feature)
+    {
+        var assessment = _Assess();
+        if (!assessment.IsRestricted) return true;
+
+        LauncherCommon.Log($"[RegionPolicy] 已阻止功能 {feature}，判定原因：{assessment.Reason}");
+        HintService.Show(
+            Hints.Error(
+                Lang.Text(
+                    assessment.Classification == RegionClassification.Unknown
+                        ? "Region.Feature.Unknown"
+                        : "Region.Feature.Restricted")));
+        return false;
+    }'''
+    if text.count(getter) != 1 or text.count(original) != 1:
+        raise RuntimeError("Avalonia region bridge changed; manual review required.")
+    return text.replace(getter, "    public bool IsRestricted => false;", 1).replace(
+        original, "    public bool Check(string feature) => true;", 1).replace("\n", newline)
+
+
+def policy_path(base):
+    files = git("ls-tree", "-r", "--name-only", base).splitlines()
+    matches = [p for p in (POLICY, BRIDGE) if p in files]
+    if len(matches) != 1:
+        raise RuntimeError("Missing/ambiguous region policy layout; manual review required.")
+    return matches[0]
+
+
 def patched_tree(base, overlay=False):
     # A private temporary index avoids changing the checked-out branch or user files.
     TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pcl-index-", dir=TEMP_ROOT) as directory:
         env = {"GIT_INDEX_FILE": str(Path(directory) / "index")}
         git("read-tree", base, env=env)
-        original = git("show", f"{base}:{POLICY}") + "\n"
-        patched = patch_policy(original).encode("utf-8")
+        path = policy_path(base)
+        original = git("show", f"{base}:{path}") + "\n"
+        patched = (patch_policy(original) if path == POLICY else patch_bridge(original)).encode("utf-8")
         blob = git("hash-object", "-w", "--stdin", data=patched)
-        git("update-index", "--cacheinfo", "100644", blob, POLICY, env=env)
+        git("update-index", "--cacheinfo", "100644", blob, path, env=env)
         if overlay:
             files = git("ls-files", "-z", "--", ".github/personal", ".github/workflows/personal-release.yml", "PERSONAL-FORK.md").split("\0")
             for name in filter(None, files):
@@ -145,7 +181,7 @@ def patched_tree(base, overlay=False):
                 git("update-index", "--add", "--cacheinfo", "100644", blob, name, env=env)
         else:
             names = git("diff", "--cached", "--name-only", base, env=env).splitlines()
-            if names != [POLICY]:
+            if names != [path]:
                 raise RuntimeError("Release source tree changes more than the region policy.")
         return git("write-tree", env=env)
 
@@ -214,7 +250,48 @@ def source_commit(tag):
         sha = git("commit-tree", tree, "-p", upstream_sha,
                   data=f"fix(region): allow downloads for {tag}\n".encode())
         git("push", "origin", f"{sha}:refs/tags/{target}")
-    return upstream_sha, sha
+    return upstream_sha, sha, policy_path(upstream_sha)
+
+
+def patch_archive(original, patched, report, tool):
+    """Patch one managed bridge DLL without extracting archive paths to disk."""
+    with zipfile.ZipFile(original) as archive:
+        infos = archive.infolist()
+        if len({i.filename for i in infos}) != len(infos):
+            raise RuntimeError("Duplicate ZIP entries; manual review required.")
+        targets = [i for i in infos if i.filename == "PCL.Launcher.dll"]
+        if len(targets) != 1:
+            raise RuntimeError("Expected one root PCL.Launcher.dll in Windows package.")
+        if sum(i.file_size for i in infos) > 1024 ** 3:
+            raise RuntimeError("Oversized package; manual review required.")
+        with tempfile.TemporaryDirectory(prefix="pcl-dll-", dir=TEMP_ROOT) as temporary:
+            raw = Path(temporary) / "PCL.Launcher.dll"
+            output = Path(temporary) / "patched.dll"
+            raw.write_bytes(archive.read(targets[0]))
+            subprocess.run(["dotnet", str(tool), str(raw), str(output), str(report)], check=True)
+            replacement = output.read_bytes()
+            with zipfile.ZipFile(patched, "w") as dest:
+                dest.comment = archive.comment
+                for info in infos:
+                    # writestr mutates ZipInfo offsets/CRC; keep input metadata intact for verification.
+                    dest.writestr(copy.copy(info), replacement if info.filename == targets[0].filename else archive.read(info))
+        with zipfile.ZipFile(patched) as dest:
+            if dest.namelist() != archive.namelist():
+                raise RuntimeError("ZIP entry list changed.")
+            unchanged = []
+            for info in infos:
+                content = dest.read(info.filename)
+                if info.filename == targets[0].filename:
+                    if content != replacement:
+                        raise RuntimeError("Patched DLL mismatch.")
+                else:
+                    if content != archive.read(info):
+                        raise RuntimeError("Unexpected package file change: " + info.filename)
+                    unchanged.append({"name": info.filename, "sha256": hashlib.sha256(content).hexdigest()})
+    detail = json.loads(report.read_text())
+    report.write_text(json.dumps({"format": "windows-zip", "inputSha256": hashlib.sha256(original.read_bytes()).hexdigest(),
+        "outputSha256": hashlib.sha256(patched.read_bytes()).hexdigest(), "patchedEntry": targets[0].filename,
+        "assemblyVerification": detail, "unchangedPackageFiles": unchanged}, indent=2), encoding="utf-8")
 
 
 def release(tag):
@@ -233,25 +310,30 @@ def release(tag):
     TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pcl-input-", dir=TEMP_ROOT) as temporary:
         for architecture in ("x64", "ARM64"):
-            name = f"PCL2_CE_Release_{architecture}.exe"
-            assets = [a for a in upstream["assets"] if a["name"] == name and a["state"] == "uploaded"]
+            names = (f"PCL2_CE_Release_{architecture}.exe", f"PCL2_CE_Release_windows_{architecture}.zip")
+            assets = [a for a in upstream["assets"] if a["name"] in names and a["state"] == "uploaded"]
             if len(assets) != 1:
-                raise RuntimeError("Missing/ambiguous upstream binary: " + name)
+                raise RuntimeError("Missing/ambiguous Windows asset for " + architecture)
+            name = assets[0]["name"]
             original = Path(temporary) / name
             download(assets[0], original)
-            patched = output / f"PCL_CE_RegionFree_Release_{architecture}.exe"
+            extension = Path(name).suffix
+            patched = output / f"PCL_CE_RegionFree_Release_{architecture}{extension}"
             report = output / f"verification-{architecture}.json"
-            subprocess.run(["dotnet", str(ROOT / ".github/personal/RegionPatch/bin/Release/net8.0/RegionPatch.dll"),
-                            str(original), str(patched), str(report)], cwd=ROOT, check=True)
+            tool = ROOT / ".github/personal/RegionPatch/bin/Release/net8.0/RegionPatch.dll"
+            if extension == ".zip":
+                patch_archive(original, patched, report, tool)
+            else:
+                subprocess.run(["dotnet", str(tool), str(original), str(patched), str(report)], cwd=ROOT, check=True)
             info = json.loads(report.read_text())
             reports.append({"architecture": architecture, "assetId": assets[0]["id"],
                             "upstreamUrl": assets[0]["browser_download_url"], **info})
-    upstream_sha, patched_sha = source_commit(tag)
+    upstream_sha, patched_sha, path = source_commit(tag)
     provenance = {"upstreamRepository": UPSTREAM, "upstreamReleaseId": upstream["id"], "upstreamTag": tag,
                   "upstreamCommit": upstream_sha, "sourceCommit": patched_sha, "patchVersion": 1,
                   "automationCommit": git("rev-parse", "HEAD"), "assets": reports}
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    source_diff = git("diff", "--binary", upstream_sha, patched_sha, "--", POLICY) + "\n"
+    source_diff = git("diff", "--binary", upstream_sha, patched_sha, "--", path) + "\n"
     (output / "region-policy.patch").write_text(source_diff, encoding="utf-8", newline="\n")
     (output / "SHA256SUMS.txt").write_text("".join(
         hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n"
@@ -260,8 +342,8 @@ def release(tag):
             "使用官方发布程序进行定点 IL 修改；发布检查确认仅两个地区策略方法改变，其他内嵌组件保持一致。"
             "微软登录、游戏所有权校验和下载文件校验代码未修改。未自动执行真实账号登录或完整游戏启动测试。\n\n"
             "**请关闭启动器内置自动更新，并从本 fork 下载后续版本，避免被官方程序覆盖。**\n\n"
-            "首次使用需要对应架构的 .NET 10 Desktop Runtime，与上游要求一致。"
-            "下载 x64 或 ARM64 的 exe；SHA256SUMS.txt 和 provenance.json 提供校验与修改记录。\n\n"
+            "运行环境要求与对应上游版本一致。ZIP 安装包需完整解压后使用，勿只取出 exe。"
+            "下载 x64 或 ARM64 的个人版；SHA256SUMS.txt 和 provenance.json 提供校验与修改记录。\n\n"
             "修改后的文件不适用上游的 Sigstore 签名。保留原作者署名和许可；本 fork 与上游独立。\n\n"
             f"上游提交：`{upstream_sha}`；对应补丁源码：`{patched_sha}`。")
     if not existing:

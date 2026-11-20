@@ -5,8 +5,9 @@
 
 ## 下载
 
-从本仓库的 Releases 下载 `PCL_CE_RegionFree_Release_x64.exe` 或 ARM64 版本。
-需要与上游相同的 .NET 10 Desktop Runtime。
+从本仓库的 Releases 下载 `PCL_CE_RegionFree_Release_x64` 或 ARM64 版本。
+现有 2.15.1 为 exe，需要 .NET 10 Desktop Runtime；后续 Avalonia 版按上游 Windows 包结构提供 zip，必须完整解压。
+运行环境要求与对应上游版本一致。目前仅发布 Windows x64 和 ARM64。
 关闭启动器内置自动更新，后续从本 fork 的 Releases 下载，避免重新安装官方带限制版本。
 本项目不改写用户现有的启动器设置或游戏文件。
 
@@ -25,17 +26,22 @@
 上游源码构建需要官方注入的登录等配置，本 fork 不持有这些配置。
 因此发布程序读取官方正式版安装包，验证 GitHub 提供的 SHA256 后，只替换
 `PCL.RestrictedFeaturePolicy.get_IsRestricted` 与 `Check(string, bool)` 的 IL 方法体。
+2026-11-20 核对的 Avalonia 结构中，改为 Windows ZIP 内 `PCL.Launcher.dll` 的
+`PCL.UI.Bridges.RestrictedFeaturesBridge.get_IsRestricted` 与实例 `Check(string)`，仍只改两个方法。
+ZIP 中其他文件解压后的内容逐一校验不变；压缩包本身会重新打包。
 其效果与每个 Release 附带的 `region-policy.patch` 相同；该附件按对应正式标签生成。
 源码适配兼容已核对的 ModBase/Common/LauncherCommon 重命名、2026-11-01 提示接口重构、2026-11-04 统一地区提示及引用排序变化；未知逻辑变化仍会停止。
 `.github/personal/region-policy.patch` 保留为最初 2.15.1 的历史参考，不再作为同步时的固定文本补丁。
 
 补丁程序不执行或解密原程序，不提取登录凭据或配置内容；验证所有其他字节未改变。
-当前仅接受 .NET bundle 6.0、未压缩且非 ReadyToRun/非强命名的主程序集；结构变化会停止发布。
+旧 exe 仅接受 .NET bundle 6.0 和未压缩主程序集；新 zip 要求根目录唯一的 `PCL.Launcher.dll`。
+两类均拒绝 ReadyToRun/强命名主程序集；未知源码逻辑或结构变化会停止发布。
 补丁不修改微软登录、游戏所有权校验、文件哈希校验和路径保护。
 
 每个 Release 附带源码补丁、SHA256SUMS、两个架构的验证报告及 provenance.json，
 记录官方输入文件、上游提交、对应源码和输出哈希。修改后的文件不再适用上游签名。
 自动验证覆盖结构、修改范围和方法返回行为；不宣称完成真实账号登录或完整游戏启动测试。
+新结构已用对应上游源码和可执行模拟程序集验证；上游尚未发布 Avalonia 正式版，真实正式包兼容性需在发布时再校验。
 
 ## 出错处理
 
